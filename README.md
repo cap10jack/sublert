@@ -5,6 +5,7 @@
                                     /____/\__,_/_.___/_/\___/_/   \__/
 
                                         Author: Yassine Aboukir
+                                Editor: Teguh Darmawangsa (cap10jack)
                                             Version: 1.4.7
 <p align="center"><a href="https://twitter.com/yassineaboukir" target="_blank"><img src="https://img.shields.io/twitter/follow/yassineaboukir.svg?logo=twitter"></a></p>
 
