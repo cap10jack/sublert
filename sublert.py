@@ -30,12 +30,13 @@ requests.packages.urllib3.disable_warnings()
 def banner():
     print('''
                    _____       __    __          __
-                  / ___/__  __/ /_  / /__  _____/ /_
-                  \__ \/ / / / __ \/ / _ \/ ___/ __/
-                 ___/ / /_/ / /_/ / /  __/ /  / /_
-                /____/\__,_/_.___/_/\___/_/   \__/
+                  / ___/__  __/ /_  / /__  _____/ /_   _
+                  \__ \/ / / / __ \/ / _ \/ ___/ __/ _/ /_
+                 ___/ / /_/ / /_/ / /  __/ /  / /_  /_  _/
+                /____/\__,_/_.___/_/\___/_/   \__/   /_/
     ''')
     print(colored("             Author: Yassine Aboukir (@yassineaboukir)", "red"))
+    print(colored("             Editor: Teguh Darmawangsa (@cap10jack)", "green"))
     print(colored("                           Version: {}", "red").format(version))
 
 def parse_args():
@@ -106,6 +107,20 @@ def slack(data): #posting to Slack
         errorlog(error, enable_logging)
     if slack_sleep_enabled:
         time.sleep(1)
+
+def telegram(data):
+    webhook_url = f"https://api.telegram.org/bot{telegram_api}/sendMessage"
+    chat_id = telegram_chat_id
+    telegram_data = {   'chat_id':chat_id,
+                        'text': data}
+    response = requests.post(
+                                webhook_url,
+                                data = json.dumps(telegram_data),
+                                headers = {'Content-Type': 'application/json'}
+                            )
+    if response.status_code != 200:
+        error = "Request to Telegram API returned an error {}, the response is:\n{}".format(response.status_code, response.text)
+        errorlog(error, enable_logging)
 
 def reset(do_reset): #clear the monitored list of domains and remove all locally stored files
     if do_reset:
@@ -332,9 +347,10 @@ def dns_resolution(new_subdomains): #Perform DNS resolution on retrieved subdoma
             dns_results[domain]["CNAME"] = eval('["There was an error while resolving."]')
             pass
     if dns_results:
-        return posting_to_slack(None, True, dns_results) #Slack new subdomains with DNS ouput
+        return posting_to_slack(None, True, dns_results),posting_to_telegram(None, True, dns_results) #Slack new subdomains with DNS ouput
+        
     else:
-        return posting_to_slack(None, False, None) #Nothing found notification
+        return posting_to_slack(None, False, None),posting_to_telegram(None, True, dns_results) #Nothing found notification
 
 def at_channel(): #control slack @channel
     return("<!channel> " if at_channel_enabled else "")
@@ -402,6 +418,69 @@ def posting_to_slack(result, dns_resolve, dns_output): #sending result to slack 
             os.system("rm -f ./output/*_tmp.txt")
         else: pass
 
+def posting_to_telegram(result, dns_resolve, dns_output): #sending result to slack workplace
+    global domain_to_monitor
+    global new_subdomains
+    if dns_resolve:
+        dns_result = dns_output
+        if dns_result:
+            dns_result = {k:v for k,v in dns_result.items() if v} #filters non-resolving subdomains
+            rev_url = []
+            print(colored("\n[!] Exporting result to Telegram. Please do not interrupt!", "red"))
+            for url in dns_result:
+                url = url \
+                    .replace('*.', '') \
+                    .replace('+ ', '')
+                rev_url.append(get_fld(url, fix_protocol = True))
+
+            unique_list = list(set(new_subdomains) & set(dns_result.keys())) #filters non-resolving subdomains from new_subdomains list
+
+            for subdomain in unique_list:
+                data = "{}:new: {}".format(at_channel(), subdomain)
+                telegram(data)
+                try:
+                    if dns_result[subdomain]["A"]:
+                        for i in dns_result[subdomain]["A"]:
+                            data = "```A : {}```".format(i)
+                            telegram(data)
+                except: pass
+                try:
+                    if dns_result[subdomain]['CNAME']:
+                        for i in dns_result[subdomain]['CNAME']:
+                            data = "```CNAME : {}```".format(i)
+                            telegram(data)
+                except: pass
+            print(colored("\n[!] Done. ", "green"))
+            rev_url = list(set(rev_url))
+            for url in rev_url:
+                os.system("rm -f ./output/" + url.lower() + ".txt")
+                os.system("mv -f ./output/" + url.lower() + "_tmp.txt " + "./output/" + url.lower() + ".txt") #save the temporary one
+            os.system("rm -f ./output/*_tmp.txt") #remove the remaining tmp files
+
+    elif result:
+        rev_url = []
+        print(colored("\n[!] Exporting the result to Telegram. Please don't interrupt!", "red"))
+        for url in result:
+            url = "https://" + url.replace('+ ', '')
+            rev_url.append(get_fld(url))
+            data = "{}:new: {}".format(at_channel(), url)
+            telegram(data)
+        print(colored("\n[!] Done. ", "green"))
+        rev_url = list(set(rev_url))
+
+        for url in rev_url:
+            os.system("rm -f ./output/" + url.lower() + ".txt")
+            os.system("mv -f ./output/" + url.lower() + "_tmp.txt " + "./output/" + url.lower() + ".txt") #save the temporary one
+        os.system("rm -f ./output/*_tmp.txt") #remove the remaining tmp files
+
+    else:
+        if not domain_to_monitor:
+            data = "{}:-1: We couldn't find any new valid subdomains.".format(at_channel())
+            telegram(data)
+            print(colored("\n[!] Done. ", "green"))
+            os.system("rm -f ./output/*_tmp.txt")
+        else: pass
+
 def multithreading(threads):
     global domain_to_monitor
     threads_list = []
@@ -451,10 +530,21 @@ if __name__ == '__main__':
     multithreading(parse_args().threads)
     new_subdomains = compare_files_diff(domain_to_monitor)
 
+#   Sending Monitored subdomain info into telebot
+    monitored_list = []
+    with open("domains.txt", "r") as f:
+            for domain in f:
+                monitored_list.append(domain.strip())
+    data = f"""
+    Monitored Subdomain : 
+    {monitored_list}"""
+    telegram(data)
+
 # Check if DNS resolution is checked
     if not domain_to_monitor:
         if (dns_resolve and new_subdomains):
             dns_resolution(new_subdomains)
         else:
             posting_to_slack(new_subdomains, False, None)
+            posting_to_telegram(new_subdomains, False, None)
     else: pass
